@@ -1,3 +1,4 @@
+use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 use hyper::{
     client::HttpConnector,
     header::PROXY_AUTHORIZATION,
@@ -8,7 +9,7 @@ use hyper::{
 use rand::Rng;
 use std::{
     net::{IpAddr, Ipv6Addr, SocketAddr, ToSocketAddrs},
-    str::FromStr,
+    str::{from_utf8, FromStr},
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -60,7 +61,9 @@ impl Proxy {
             .headers()
             .get(PROXY_AUTHORIZATION)
             .and_then(|addr| addr.to_str().ok())
-            .and_then(|addr| SocketAddr::from_str(addr).ok());
+            .and_then(|addr| URL_SAFE.decode(addr).ok())
+            .and_then(|addr| from_utf8(&addr).ok().map(|x| x.to_owned()))
+            .and_then(|addr| SocketAddr::from_str(&addr).ok());
 
         tokio::task::spawn(async move {
             let remote_addr = req.uri().authority().map(|auth| auth.to_string()).unwrap();
