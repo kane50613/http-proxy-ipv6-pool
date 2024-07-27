@@ -1,11 +1,15 @@
 use hyper::{
     client::HttpConnector,
+    header::PROXY_AUTHORIZATION,
     server::conn::AddrStream,
     service::{make_service_fn, service_fn},
     Body, Client, Method, Request, Response, Server,
 };
 use rand::Rng;
-use std::net::{IpAddr, Ipv6Addr, SocketAddr, ToSocketAddrs};
+use std::{
+    net::{IpAddr, Ipv6Addr, SocketAddr, ToSocketAddrs},
+    str::FromStr,
+};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::TcpSocket,
@@ -52,10 +56,16 @@ impl Proxy {
     }
 
     async fn process_connect(self, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
+        let fixed_addr = req
+            .headers()
+            .get(PROXY_AUTHORIZATION)
+            .and_then(|addr| addr.to_str().ok())
+            .and_then(|addr| SocketAddr::from_str(addr).ok());
+
         tokio::task::spawn(async move {
             let remote_addr = req.uri().authority().map(|auth| auth.to_string()).unwrap();
             let mut upgraded = hyper::upgrade::on(req).await.unwrap();
-            self.tunnel(&mut upgraded, remote_addr).await
+            self.tunnel(&mut upgraded, remote_addr, fixed_addr).await
         });
         Ok(Response::new(Body::empty()))
     }
@@ -64,7 +74,10 @@ impl Proxy {
         let bind_addr = get_rand_ipv6(self.ipv6, self.prefix_len);
         let mut http = HttpConnector::new();
         http.set_local_address(Some(bind_addr));
-        println!("{} via {bind_addr}", req.uri().host().unwrap_or_default());
+        println!(
+            "request {} via {bind_addr}",
+            req.uri().host().unwrap_or_default()
+        );
 
         let client = Client::builder()
             .http1_title_case_headers(true)
@@ -74,16 +87,26 @@ impl Proxy {
         Ok(res)
     }
 
-    async fn tunnel<A>(self, upgraded: &mut A, addr_str: String) -> std::io::Result<()>
+    async fn tunnel<A>(
+        self,
+        upgraded: &mut A,
+        addr_str: String,
+        fixed_addr: Option<SocketAddr>,
+    ) -> std::io::Result<()>
     where
         A: AsyncRead + AsyncWrite + Unpin + ?Sized,
     {
         if let Ok(addrs) = addr_str.to_socket_addrs() {
             for addr in addrs {
                 let socket = TcpSocket::new_v6()?;
-                let bind_addr = get_rand_ipv6_socket_addr(self.ipv6, self.prefix_len);
+                let bind_addr = if let Some(addr) = fixed_addr {
+                    addr
+                } else {
+                    get_rand_ipv6_socket_addr(self.ipv6, self.prefix_len)
+                };
+
                 if socket.bind(bind_addr).is_ok() {
-                    println!("{addr_str} via {bind_addr}");
+                    println!("tunneling {addr_str} via {bind_addr}");
                     if let Ok(mut server) = socket.connect(addr).await {
                         tokio::io::copy_bidirectional(upgraded, &mut server).await?;
                         return Ok(());
