@@ -61,10 +61,7 @@ impl Proxy {
             .headers()
             .get(PROXY_AUTHORIZATION)
             .and_then(|addr| addr.to_str().ok())
-            .and_then(|addr| URL_SAFE.decode(addr).ok())
-            .and_then(|addr| from_utf8(&addr).ok().map(|addr| addr.to_string()))
-            .and_then(|addr| IpAddr::from_str(addr.as_str()).ok())
-            .map(|addr| SocketAddr::new(addr, thread_rng().gen()));
+            .and_then(|addr| Ipv6Addr::from_str(addr).ok());
 
         tokio::task::spawn(async move {
             let remote_addr = req.uri().authority().map(|auth| auth.to_string()).unwrap();
@@ -95,7 +92,7 @@ impl Proxy {
         self,
         upgraded: &mut A,
         addr_str: String,
-        fixed_addr: Option<SocketAddr>,
+        fixed_addr: Option<Ipv6Addr>,
     ) -> std::io::Result<()>
     where
         A: AsyncRead + AsyncWrite + Unpin + ?Sized,
@@ -104,7 +101,7 @@ impl Proxy {
             for addr in addrs {
                 let socket = TcpSocket::new_v6()?;
                 let bind_addr = if let Some(addr) = fixed_addr {
-                    addr
+                    SocketAddr::new(addr.into(), thread_rng().gen())
                 } else {
                     get_rand_ipv6_socket_addr(self.ipv6, self.prefix_len)
                 };
