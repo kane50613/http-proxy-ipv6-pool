@@ -1,6 +1,7 @@
 use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 use hyper::{
     client::HttpConnector,
+    header::PROXY_AUTHORIZATION,
     server::conn::AddrStream,
     service::{make_service_fn, service_fn},
     Body, Client, Method, Request, Response, Server,
@@ -56,11 +57,13 @@ impl Proxy {
     }
 
     async fn process_connect(self, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
-        let fixed_addr = URL_SAFE
-            .decode(&req.uri().path()[1..])
-            .ok()
-            .and_then(|addr| from_utf8(&addr).ok().map(|x| x.to_owned()))
-            .and_then(|addr| SocketAddr::from_str(&addr).ok());
+        let fixed_addr = req
+            .headers()
+            .get(PROXY_AUTHORIZATION)
+            .and_then(|addr| addr.to_str().ok())
+            .and_then(|addr| URL_SAFE.decode(addr).ok())
+            .and_then(|addr| from_utf8(&addr).ok().map(|addr| addr.to_string()))
+            .and_then(|addr| SocketAddr::from_str(addr.as_str()).ok());
 
         tokio::task::spawn(async move {
             let remote_addr = req.uri().authority().map(|auth| auth.to_string()).unwrap();
