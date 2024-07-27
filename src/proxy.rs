@@ -6,7 +6,7 @@ use hyper::{
     service::{make_service_fn, service_fn},
     Body, Client, Method, Request, Response, Server,
 };
-use rand::Rng;
+use rand::{thread_rng, Rng};
 use std::{
     net::{IpAddr, Ipv6Addr, SocketAddr, ToSocketAddrs},
     str::{from_utf8, FromStr},
@@ -63,7 +63,8 @@ impl Proxy {
             .and_then(|addr| addr.to_str().ok())
             .and_then(|addr| URL_SAFE.decode(addr).ok())
             .and_then(|addr| from_utf8(&addr).ok().map(|addr| addr.to_string()))
-            .and_then(|addr| SocketAddr::from_str(addr.as_str()).ok());
+            .and_then(|addr| IpAddr::from_str(addr.as_str()).ok())
+            .map(|addr| SocketAddr::new(addr, thread_rng().gen()));
 
         tokio::task::spawn(async move {
             let remote_addr = req.uri().authority().map(|auth| auth.to_string()).unwrap();
